@@ -7,7 +7,48 @@ spring:
 rating-url: ${RATING_URL:http://localhost:8050}
 library-url: ${LIBRARY_URL:http://localhost:8060}
 reservation-url: ${RESERVATION_URL:http://localhost:8070}
-management:
+management:replicaCount: 1
+
+image:
+  repository: ghcr.io/vladlen-vozhzhaev/lab4-gateway
+  tag: latest
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  host: "159.194.233.221.nip.io"
+  path: /
+  pathType: Prefix
+
+env:
+  - name: RATING_URL
+    value: "http://rating:80"
+  - name: LIBRARY_URL
+    value: "http://library:80"
+  - name: RESERVATION_URL
+    value: "http://reservation:80"
+
+livenessProbe:
+  httpGet:
+    path: /actuator/health/liveness
+    port: 8080
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  failureThreshold: 5
+
+readinessProbe:
+  httpGet:
+    path: /actuator/health/readiness
+    port: 8080
+  initialDelaySeconds: 40
+  periodSeconds: 5
+  failureThreshold: 5
   endpoints:
     web:
       exposure:

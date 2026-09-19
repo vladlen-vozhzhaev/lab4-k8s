@@ -4,6 +4,8 @@ auth:
   database: postgres
   postgresPassword: postgres
 primary:
+  persistence:
+    enabled: false
   initdb:
     scripts:
       db-v4.sql: |

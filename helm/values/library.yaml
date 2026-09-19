@@ -8,7 +8,7 @@ image:
 service:
   type: ClusterIP
   port: 80
-  targetPort: 8080
+  targetPort: 8060
 
 ingress:
   enabled: false
@@ -21,18 +21,10 @@ env:
   - name: SPRING_DATASOURCE_PASSWORD
     value: "test"
 
-resources:
-  requests:
-    cpu: 100m
-    memory: 256Mi
-  limits:
-    cpu: 500m
-    memory: 512Mi
-
 livenessProbe:
   httpGet:
     path: /actuator/health/liveness
-    port: 8080
+    port: 8060
   initialDelaySeconds: 60
   periodSeconds: 10
   failureThreshold: 5
@@ -40,7 +32,7 @@ livenessProbe:
 readinessProbe:
   httpGet:
     path: /actuator/health/readiness
-    port: 8080
+    port: 8060
   initialDelaySeconds: 40
   periodSeconds: 5
   failureThreshold: 5

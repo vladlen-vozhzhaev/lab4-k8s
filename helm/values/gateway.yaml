@@ -16,7 +16,6 @@ ingress:
   host: "159.194.233.221.nip.io"
   path: /
   pathType: Prefix
-  annotations: {}
 
 env:
   - name: RATING_URL
@@ -25,14 +24,6 @@ env:
     value: "http://library:80"
   - name: RESERVATION_URL
     value: "http://reservation:80"
-
-resources:
-  requests:
-    cpu: 100m
-    memory: 256Mi
-  limits:
-    cpu: 500m
-    memory: 512Mi
 
 livenessProbe:
   httpGet:

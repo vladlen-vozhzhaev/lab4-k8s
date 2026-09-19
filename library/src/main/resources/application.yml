@@ -10,7 +10,44 @@ spring:
       ddl-auto: update
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
+        dialect: org.hibereplicaCount: 1
+
+image:
+  repository: ghcr.io/vladlen-vozhzhaev/lab4-library
+  tag: latest
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8060
+
+ingress:
+  enabled: false
+
+env:
+  - name: SPRING_DATASOURCE_URL
+    value: "jdbc:postgresql://postgres-postgresql.rsoi.svc.cluster.local:5432/libraries"
+  - name: SPRING_DATASOURCE_USERNAME
+    value: "program"
+  - name: SPRING_DATASOURCE_PASSWORD
+    value: "test"
+
+livenessProbe:
+  httpGet:
+    path: /actuator/health/liveness
+    port: 8060
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  failureThreshold: 5
+
+readinessProbe:
+  httpGet:
+    path: /actuator/health/readiness
+    port: 8060
+  initialDelaySeconds: 40
+  periodSeconds: 5
+  failureThreshold: 5rnate.dialect.PostgreSQLDialect
 management:
   endpoints:
     web:
