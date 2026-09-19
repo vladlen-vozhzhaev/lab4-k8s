@@ -1,44 +1,22 @@
-#!/usr/bin/env bash
-
-set -e
-
-variant=${1:-${VARIANT}}
-deployment=${2:-${DEPLOYMENT_NAME}}
-namespace=${3:-${NAMESPACE}}
-
-[[ -z $namespace ]] && namespace="default"
-
-path=$(dirname "$0")
-
-timed() {
-  end=$(date +%s)
-  dt=$(($end - $1))
-  dd=$(($dt / 86400))
-  dt2=$(($dt - 86400 * $dd))
-  dh=$(($dt2 / 3600))
-  dt3=$(($dt2 - 3600 * $dh))
-  dm=$(($dt3 / 60))
-  ds=$(($dt3 - 60 * $dm))
-
-  LC_NUMERIC=C printf "\nTotal runtime: %02d min %02d seconds\n" "$dm" "$ds"
-}
-
-success() {
-  newman run \
-    --delay-request=100 \
-    --folder=success \
-    --export-environment "$variant"/postman/environment.json \
-    --environment "$variant"/postman/environment.json \
-    "$variant"/postman/collection.json
-}
-
 step() {
   local step=$1
   [[ $((step % 2)) -eq 0 ]] && replicas=1 || replicas=0
 
   printf "=== Step %d: scale %s to %s ===\n" "$step" "$deployment" "$replicas"
 
-  kubectl scale deployment "$deployment" -n "$namespace" --replicas "$replicas" 
+  kubectl scale deployment "$deployment" -n "$namespace" --replicas "$replicas"
+
+  # Ждём, пока Deployment действительно достигнет нужного числа реплик
+  kubectl rollout status deployment/"$deployment" -n "$namespace" --timeout=60s || true
+
+  # Дополнительно: если реплик 0 — ждём, чтобы поды исчезли полностью
+  if [[ $replicas -eq 0 ]]; then
+    kubectl wait --for=delete pod -n "$namespace" \
+      -l app.kubernetes.io/name="$deployment" --timeout=60s || true
+  else
+    kubectl wait --for=condition=Ready pod -n "$namespace" \
+      -l app.kubernetes.io/name="$deployment" --timeout=120s || true
+  fi
 
   newman run \
     --delay-request=100 \
@@ -49,23 +27,3 @@ step() {
 
   printf "=== Step %d completed ===\n" "$step"
 }
-
-start=$(date +%s)
-trap 'timed $start' EXIT
-
-printf "=== Start test scenario ===\n"
-
-# success execute
-success
-
-# stop service
-step 1
-
-# start service
-step 2
-
-# stop service
-step 3
-
-# start service
-step 4
