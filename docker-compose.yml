@@ -1,0 +1,84 @@
+version: "3"
+services:
+  postgres:
+    image: library/postgres:13
+    container_name: postgres
+    restart: on-failure
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: postgres
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./postgres/:/docker-entrypoint-initdb.d/
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  rating:
+    build: ./rating
+    image: ghcr.io/vladlen-vozhzhaev/lab4-rating:latest
+    container_name: rating
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ratings
+      SPRING_DATASOURCE_USERNAME: program
+      SPRING_DATASOURCE_PASSWORD: test
+    ports:
+      - "8050:8050"
+
+  library:
+    build: ./library
+    image: ghcr.io/vladlen-vozhzhaev/lab4-library:latest
+    container_name: library
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/libraries
+      SPRING_DATASOURCE_USERNAME: program
+      SPRING_DATASOURCE_PASSWORD: test
+    ports:
+      - "8060:8060"
+
+  reservation:
+    build: ./reservation
+    image: ghcr.io/vladlen-vozhzhaev/lab4-reservation:latest
+    container_name: reservation
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/reservations
+      SPRING_DATASOURCE_USERNAME: program
+      SPRING_DATASOURCE_PASSWORD: test
+    ports:
+      - "8070:8070"
+
+  gateway:
+    build: ./gateway
+    image: ghcr.io/vladlen-vozhzhaev/lab4-gateway:latest
+    container_name: gateway
+    restart: on-failure
+    depends_on:
+      - rating
+      - library
+      - reservation
+    environment:
+      RATING_URL: http://rating:8050
+      LIBRARY_URL: http://library:8060
+      RESERVATION_URL: http://reservation:8070
+    ports:
+      - "8080:8080"
+
+volumes:
+  db-data:
