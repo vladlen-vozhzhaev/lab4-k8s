@@ -78,11 +78,8 @@ jobs:
           kubectl wait -n rsoi -l app.kubernetes.io/name=gateway \
             pod --for=condition=Ready --timeout=5m
 
-      - name: Run Newman tests
-        run: |
-          npm install -g newman
-          newman run v4/postman/collection.json \
-            -e v4/postman/environment.json
+      - name: Install Newman
+        run: npm install -g newman
 
       - name: Autograding
         uses: education/autograding@v1
