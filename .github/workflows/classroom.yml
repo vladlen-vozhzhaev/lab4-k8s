@@ -46,6 +46,25 @@ jobs:
           helm upgrade --install postgres bitnami/postgresql \
             -n rsoi -f helm/values/postgres.yaml
 
+      - name: Wait for Postgres
+        run: |
+          kubectl wait -n rsoi --for=condition=Ready \
+            pod/postgres-postgresql-0 --timeout=5m
+
+      - name: Init Postgres databases
+        run: |
+          POSTGRES_PASSWORD=$(kubectl get secret -n rsoi postgres-postgresql -o jsonpath="{.data.postgres-password}" | base64 -d)
+          kubectl exec -n rsoi postgres-postgresql-0 -- env PGPASSWORD="$POSTGRES_PASSWORD" \
+            psql -U postgres -c "CREATE USER program WITH PASSWORD 'test';" || true
+          for db in ratings libraries reservations; do
+            kubectl exec -n rsoi postgres-postgresql-0 -- env PGPASSWORD="$POSTGRES_PASSWORD" \
+              psql -U postgres -c "CREATE DATABASE $db OWNER program;" || true
+            kubectl exec -n rsoi postgres-postgresql-0 -- env PGPASSWORD="$POSTGRES_PASSWORD" \
+              psql -U postgres -d $db -c "GRANT ALL ON SCHEMA public TO program;" || true
+            kubectl exec -n rsoi postgres-postgresql-0 -- env PGPASSWORD="$POSTGRES_PASSWORD" \
+              psql -U postgres -d $db -c "ALTER SCHEMA public OWNER TO program;" || true
+          done
+
       - name: Deploy services
         run: |
           for svc in rating library reservation gateway; do
