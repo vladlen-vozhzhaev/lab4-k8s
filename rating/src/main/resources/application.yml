@@ -1,5 +1,6 @@
 server:
   port: 8050
+  shutdown: graceful
 spring:
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/ratings}

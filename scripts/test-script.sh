@@ -12,10 +12,11 @@ step() {
   # Дополнительно: если реплик 0 — ждём, чтобы поды исчезли полностью
   if [[ $replicas -eq 0 ]]; then
     kubectl wait --for=delete pod -n "$namespace" \
-      -l app.kubernetes.io/name="$deployment" --timeout=60s || true
+      -l app.kubernetes.io/name="$deployment" --timeout=60s
+    sleep 3   # даём nginx закрыть keepalive-соединения
   else
     kubectl wait --for=condition=Ready pod -n "$namespace" \
-      -l app.kubernetes.io/name="$deployment" --timeout=120s || true
+      -l app.kubernetes.io/name="$deployment" --timeout=180s
   fi
 
   newman run \
