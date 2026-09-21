@@ -49,11 +49,16 @@ public class GatewayController {
 
     // ---------- Rating ----------
     @GetMapping("/rating")
-    public ResponseEntity<Object> rating(@RequestHeader("X-User-Name") String username) {
-        Object body = client.get().uri(ratingUrl + "/api/v1/rating")
-                .header("X-User-Name", username)
-                .retrieve().body(Object.class);
-        return ResponseEntity.ok(body);
+    public ResponseEntity<?> rating(@RequestHeader("X-User-Name") String username) {
+        try {
+            Object body = client.get().uri(ratingUrl + "/api/v1/rating")
+                    .header("X-User-Name", username)
+                    .retrieve().body(Object.class);
+            return ResponseEntity.ok(body);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "Bonus Service unavailable"));
+        }
     }
 
     // ---------- Reservations list ----------
@@ -68,15 +73,27 @@ public class GatewayController {
         List<Map<String, Object>> out = new ArrayList<>();
         if (rows != null) {
             for (Map<String, Object> r : rows) {
-                Map<String, Object> book = fetchMap(libraryUrl + "/api/v1/books/" + r.get("bookUid"));
-                Map<String, Object> library = fetchMap(libraryUrl + "/api/v1/libraries/" + r.get("libraryUid"));
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("reservationUid", r.get("reservationUid"));
                 item.put("status", r.get("status"));
                 item.put("startDate", r.get("startDate"));
                 item.put("tillDate", r.get("tillDate"));
-                item.put("book", extractBook(book));
-                item.put("library", extractLibrary(library));
+
+                Map<String, Object> book = fetchMap(libraryUrl + "/api/v1/books/" + r.get("bookUid"));
+                Map<String, Object> library = fetchMap(libraryUrl + "/api/v1/libraries/" + r.get("libraryUid"));
+
+                if (book != null) {
+                    item.put("book", extractBook(book));
+                } else {
+                    // fallback: только bookUid
+                    item.put("book", Map.of("bookUid", r.get("bookUid")));
+                }
+                if (library != null) {
+                    item.put("library", extractLibrary(library));
+                } else {
+                    // fallback: только libraryUid
+                    item.put("library", Map.of("libraryUid", r.get("libraryUid")));
+                }
                 out.add(item);
             }
         }
@@ -87,18 +104,32 @@ public class GatewayController {
     @PostMapping("/reservations")
     public ResponseEntity<?> takeBook(@RequestHeader("X-User-Name") String username,
                                       @RequestBody TakeBookRequest req) {
-
         // 1. rating
-        Map<String, Object> rating = client.get().uri(ratingUrl + "/api/v1/rating")
-                .header("X-User-Name", username)
-                .retrieve().body(new ParameterizedTypeReference<>() {});
-        if (rating == null) return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Map.of("message", "Rating service unavailable"));
+        Map<String, Object> rating;
+        try {
+            rating = client.get().uri(ratingUrl + "/api/v1/rating")
+                    .header("X-User-Name", username)
+                    .retrieve().body(new ParameterizedTypeReference<>() {});
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "Bonus Service unavailable"));
+        }
+        if (rating == null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "Bonus Service unavailable"));
+        }
         int stars = ((Number) rating.get("stars")).intValue();
 
         // 2. active reservations
-        Long active = client.get().uri(reservationUrl + "/api/v1/reservations/count-active")
-                .header("X-User-Name", username)
-                .retrieve().body(Long.class);
+        Long active;
+        try {
+            active = client.get().uri(reservationUrl + "/api/v1/reservations/count-active")
+                    .header("X-User-Name", username)
+                    .retrieve().body(Long.class);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "Bonus Service unavailable"));
+        }
         long rented = active == null ? 0 : active;
 
         if (rented >= stars) {
@@ -107,9 +138,15 @@ public class GatewayController {
         }
 
         // 3. reserve in library
-        ResponseEntity<Void> reserve = client.post()
-                .uri(libraryUrl + "/api/v1/libraries/{l}/books/{b}/reserve", req.libraryUid(), req.bookUid())
-                .retrieve().toBodilessEntity();
+        ResponseEntity<Void> reserve;
+        try {
+            reserve = client.post()
+                    .uri(libraryUrl + "/api/v1/libraries/{l}/books/{b}/reserve", req.libraryUid(), req.bookUid())
+                    .retrieve().toBodilessEntity();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "Bonus Service unavailable"));
+        }
         if (reserve.getStatusCode().isError()) {
             return ResponseEntity.status(HttpStatus.CONFLICT)
                     .body(Map.of("message", "Book is not available"));
@@ -121,11 +158,17 @@ public class GatewayController {
         createBody.put("libraryUid", req.libraryUid());
         createBody.put("tillDate", req.tillDate());
 
-        Map<String, Object> reservation = client.post()
-                .uri(reservationUrl + "/api/v1/reservations")
-                .header("X-User-Name", username)
-                .body(createBody)
-                .retrieve().body(new ParameterizedTypeReference<>() {});
+        Map<String, Object> reservation;
+        try {
+            reservation = client.post()
+                    .uri(reservationUrl + "/api/v1/reservations")
+                    .header("X-User-Name", username)
+                    .body(createBody)
+                    .retrieve().body(new ParameterizedTypeReference<>() {});
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "Bonus Service unavailable"));
+        }
 
         // 5. enrich
         Map<String, Object> book = fetchMap(libraryUrl + "/api/v1/books/" + req.bookUid());
@@ -149,10 +192,17 @@ public class GatewayController {
                                         @RequestBody ReturnBookRequest req) {
 
         // find reservation
-        List<Map<String, Object>> rows = client.get()
-                .uri(reservationUrl + "/api/v1/reservations")
-                .header("X-User-Name", username)
-                .retrieve().body(new ParameterizedTypeReference<>() {});
+        List<Map<String, Object>> rows;
+        try {
+            rows = client.get()
+                    .uri(reservationUrl + "/api/v1/reservations")
+                    .header("X-User-Name", username)
+                    .retrieve().body(new ParameterizedTypeReference<>() {});
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "Bonus Service unavailable"));
+        }
+
         Map<String, Object> current = null;
         if (rows != null) {
             for (Map<String, Object> r : rows) {
@@ -169,25 +219,38 @@ public class GatewayController {
         Map<String, Object> returnBody = new LinkedHashMap<>();
         returnBody.put("condition", req.condition());
         returnBody.put("date", req.date());
-        client.post().uri(reservationUrl + "/api/v1/reservations/{u}/return", reservationUid)
-                .header("X-User-Name", username)
-                .body(returnBody)
-                .retrieve().toBodilessEntity();
+        try {
+            client.post().uri(reservationUrl + "/api/v1/reservations/{u}/return", reservationUid)
+                    .header("X-User-Name", username)
+                    .body(returnBody)
+                    .retrieve().toBodilessEntity();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "Bonus Service unavailable"));
+        }
 
-        // return in library
-        client.post().uri(libraryUrl + "/api/v1/libraries/{l}/books/{b}/return",
-                        current.get("libraryUid"), current.get("bookUid"))
-                .retrieve().toBodilessEntity();
+        // return in library — игнорируем ошибку (не критично)
+        try {
+            client.post().uri(libraryUrl + "/api/v1/libraries/{l}/books/{b}/return",
+                            current.get("libraryUid"), current.get("bookUid"))
+                    .retrieve().toBodilessEntity();
+        } catch (Exception e) {
+            // library недоступен — пропускаем, книга всё равно возвращена
+        }
 
-        // rating recalculation
+        // rating recalculation — игнорируем ошибку (не критично)
         LocalDate till = LocalDate.parse((String) current.get("tillDate"));
         boolean late = req.date() != null && req.date().isAfter(till);
         boolean badCondition = originalCondition != null && !originalCondition.equals(req.condition());
         int delta = (late || badCondition) ? -10 : 1;
 
-        client.post().uri(ratingUrl + "/api/v1/rating?delta={d}", delta)
-                .header("X-User-Name", username)
-                .retrieve().toBodilessEntity();
+        try {
+            client.post().uri(ratingUrl + "/api/v1/rating?delta={d}", delta)
+                    .header("X-User-Name", username)
+                    .retrieve().toBodilessEntity();
+        } catch (Exception e) {
+            // rating недоступен — пропускаем, книга всё равно возвращена
+        }
 
         return ResponseEntity.noContent().build();
     }
