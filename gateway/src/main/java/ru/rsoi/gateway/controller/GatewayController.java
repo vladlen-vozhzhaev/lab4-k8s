@@ -54,6 +54,10 @@ public class GatewayController {
             Object body = client.get().uri(ratingUrl + "/api/v1/rating")
                     .header("X-User-Name", username)
                     .retrieve().body(Object.class);
+            if (body == null) {
+                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                        .body(Map.of("message", "Bonus Service unavailable"));
+            }
             return ResponseEntity.ok(body);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
@@ -63,12 +67,18 @@ public class GatewayController {
 
     // ---------- Reservations list ----------
     @GetMapping("/reservations")
-    public ResponseEntity<List<Map<String, Object>>> listReservations(@RequestHeader("X-User-Name") String username) {
-        List<Map<String, Object>> rows = client.get()
-                .uri(reservationUrl + "/api/v1/reservations")
-                .header("X-User-Name", username)
-                .retrieve()
-                .body(new ParameterizedTypeReference<>() {});
+    public ResponseEntity<?> listReservations(@RequestHeader("X-User-Name") String username) {
+        List<Map<String, Object>> rows;
+        try {
+            rows = client.get()
+                    .uri(reservationUrl + "/api/v1/reservations")
+                    .header("X-User-Name", username)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("message", "Reservation Service unavailable"));
+        }
 
         List<Map<String, Object>> out = new ArrayList<>();
         if (rows != null) {
@@ -85,14 +95,16 @@ public class GatewayController {
                 if (book != null) {
                     item.put("book", extractBook(book));
                 } else {
-                    // fallback: только bookUid
-                    item.put("book", Map.of("bookUid", r.get("bookUid")));
+                    Map<String, Object> fallbackBook = new LinkedHashMap<>();
+                    fallbackBook.put("bookUid", r.get("bookUid"));
+                    item.put("book", fallbackBook);
                 }
                 if (library != null) {
                     item.put("library", extractLibrary(library));
                 } else {
-                    // fallback: только libraryUid
-                    item.put("library", Map.of("libraryUid", r.get("libraryUid")));
+                    Map<String, Object> fallbackLib = new LinkedHashMap<>();
+                    fallbackLib.put("libraryUid", r.get("libraryUid"));
+                    item.put("library", fallbackLib);
                 }
                 out.add(item);
             }
@@ -114,7 +126,7 @@ public class GatewayController {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("message", "Bonus Service unavailable"));
         }
-        if (rating == null) {
+        if (rating == null || rating.get("stars") == null) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("message", "Bonus Service unavailable"));
         }
@@ -166,6 +178,10 @@ public class GatewayController {
                     .body(createBody)
                     .retrieve().body(new ParameterizedTypeReference<>() {});
         } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "Bonus Service unavailable"));
+        }
+        if (reservation == null) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("message", "Bonus Service unavailable"));
         }
@@ -229,34 +245,29 @@ public class GatewayController {
                     .body(Map.of("message", "Bonus Service unavailable"));
         }
 
-        // return in library — игнорируем ошибку (не критично)
+        // return in library — игнорируем ошибку
         try {
             client.post().uri(libraryUrl + "/api/v1/libraries/{l}/books/{b}/return",
                             current.get("libraryUid"), current.get("bookUid"))
                     .retrieve().toBodilessEntity();
-        } catch (Exception e) {
-            // library недоступен — пропускаем, книга всё равно возвращена
-        }
+        } catch (Exception ignored) {}
 
-        // rating recalculation — игнорируем ошибку (не критично)
-        LocalDate till = LocalDate.parse((String) current.get("tillDate"));
-        boolean late = req.date() != null && req.date().isAfter(till);
-        boolean badCondition = originalCondition != null && !originalCondition.equals(req.condition());
-        int delta = (late || badCondition) ? -10 : 1;
-
+        // rating recalculation — игнорируем ошибку
         try {
+            LocalDate till = LocalDate.parse((String) current.get("tillDate"));
+            boolean late = req.date() != null && req.date().isAfter(till);
+            boolean badCondition = originalCondition != null && !originalCondition.equals(req.condition());
+            int delta = (late || badCondition) ? -10 : 1;
+
             client.post().uri(ratingUrl + "/api/v1/rating?delta={d}", delta)
                     .header("X-User-Name", username)
                     .retrieve().toBodilessEntity();
-        } catch (Exception e) {
-            // rating недоступен — пропускаем, книга всё равно возвращена
-        }
+        } catch (Exception ignored) {}
 
         return ResponseEntity.noContent().build();
     }
 
     // ---------- helpers ----------
-    @SuppressWarnings("unchecked")
     private Map<String, Object> fetchMap(String url) {
         try {
             return client.get().uri(url).retrieve().body(new ParameterizedTypeReference<>() {});
@@ -266,7 +277,7 @@ public class GatewayController {
     }
 
     private Map<String, Object> extractBook(Map<String, Object> book) {
-        if (book == null) return Map.of();
+        if (book == null) return new LinkedHashMap<>();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("bookUid", book.get("bookUid"));
         out.put("name", book.get("name"));
@@ -276,7 +287,7 @@ public class GatewayController {
     }
 
     private Map<String, Object> extractLibrary(Map<String, Object> library) {
-        if (library == null) return Map.of();
+        if (library == null) return new LinkedHashMap<>();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("libraryUid", library.get("libraryUid"));
         out.put("name", library.get("name"));
