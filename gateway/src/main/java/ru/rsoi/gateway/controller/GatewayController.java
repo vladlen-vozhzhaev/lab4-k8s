@@ -11,6 +11,7 @@ import ru.rsoi.gateway.dto.TakeBookRequest;
 
 import java.time.LocalDate;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -21,6 +22,13 @@ public class GatewayController {
     @Value("${rating-url}")      private String ratingUrl;
     @Value("${library-url}")     private String libraryUrl;
     @Value("${reservation-url}") private String reservationUrl;
+
+    /**
+     * Накопленные изменения рейтинга, которые не удалось применить,
+     * потому что rating-service был недоступен.
+     * username -> суммарная delta (обычно +1 за возврат, -10 за просрочку/плохое состояние)
+     */
+    private final Map<String, Integer> pendingDeltas = new ConcurrentHashMap<>();
 
     public GatewayController(RestClient client) { this.client = client; }
 
@@ -49,20 +57,44 @@ public class GatewayController {
 
     // ---------- Rating ----------
     @GetMapping("/rating")
+    @SuppressWarnings("unchecked")
     public ResponseEntity<?> rating(@RequestHeader("X-User-Name") String username) {
+        Object body;
         try {
-            Object body = client.get().uri(ratingUrl + "/api/v1/rating")
+            body = client.get().uri(ratingUrl + "/api/v1/rating")
                     .header("X-User-Name", username)
                     .retrieve().body(Object.class);
-            if (body == null) {
-                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                        .body(Map.of("message", "Bonus Service unavailable"));
-            }
-            return ResponseEntity.ok(body);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("message", "Bonus Service unavailable"));
         }
+        if (body == null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "Bonus Service unavailable"));
+        }
+
+        // Применяем накопленные delta, если они есть
+        Integer pending = pendingDeltas.get(username);
+        if (pending != null && pending != 0 && body instanceof Map) {
+            Map<String, Object> m = (Map<String, Object>) body;
+            Object starsObj = m.get("stars");
+            if (starsObj instanceof Number) {
+                int stars = ((Number) starsObj).intValue() + pending;
+                m.put("stars", stars);
+
+                // пытаемся "сбросить" pending в rating, если он доступен
+                try {
+                    client.post().uri(ratingUrl + "/api/v1/rating?delta={d}", pending)
+                            .header("X-User-Name", username)
+                            .retrieve().toBodilessEntity();
+                    pendingDeltas.remove(username);
+                } catch (Exception ignored) {
+                    // rating всё ещё недоступен — оставляем pending как есть
+                }
+            }
+        }
+
+        return ResponseEntity.ok(body);
     }
 
     // ---------- Reservations list ----------
@@ -245,24 +277,32 @@ public class GatewayController {
                     .body(Map.of("message", "Bonus Service unavailable"));
         }
 
-        // return in library — игнорируем ошибку
+        // return in library — игнорируем ошибку (не критично)
         try {
             client.post().uri(libraryUrl + "/api/v1/libraries/{l}/books/{b}/return",
                             current.get("libraryUid"), current.get("bookUid"))
                     .retrieve().toBodilessEntity();
         } catch (Exception ignored) {}
 
-        // rating recalculation — игнорируем ошибку
-        try {
-            LocalDate till = LocalDate.parse((String) current.get("tillDate"));
-            boolean late = req.date() != null && req.date().isAfter(till);
-            boolean badCondition = originalCondition != null && !originalCondition.equals(req.condition());
-            int delta = (late || badCondition) ? -10 : 1;
+        // rating recalculation
+        LocalDate till = LocalDate.parse((String) current.get("tillDate"));
+        boolean late = req.date() != null && req.date().isAfter(till);
+        boolean badCondition = originalCondition != null && !originalCondition.equals(req.condition());
+        int delta = (late || badCondition) ? -10 : 1;
 
+        boolean applied = false;
+        try {
             client.post().uri(ratingUrl + "/api/v1/rating?delta={d}", delta)
                     .header("X-User-Name", username)
                     .retrieve().toBodilessEntity();
-        } catch (Exception ignored) {}
+            applied = true;
+        } catch (Exception ignored) {
+            // rating недоступен — копим delta
+        }
+
+        if (!applied) {
+            pendingDeltas.merge(username, delta, Integer::sum);
+        }
 
         return ResponseEntity.noContent().build();
     }
