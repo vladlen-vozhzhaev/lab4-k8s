@@ -5,6 +5,8 @@ metadata:
   labels:
     {{- include "generic-service.labels" . | nindent 4 }}
 spec:
+  terminationGracePeriodSeconds: 5
+    {{- with .Values.imagePullSecrets }}
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
